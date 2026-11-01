@@ -11,8 +11,8 @@ interface ApplicationRoundsModalProps {
   application: Application;
   rounds: ApplicationRound[];
   onClose: () => void;
-  onSaveRound: (round: ApplicationRound) => Promise<void> | void;
-  onDeleteRound: (roundId: string) => Promise<void> | void;
+  onSaveRound: (round: ApplicationRound) => Promise<boolean | void> | boolean | void;
+  onDeleteRound: (roundId: string) => Promise<boolean | void> | boolean | void;
   onUpdateApplicationStatus?: (appId: string, status: JobStatus) => Promise<void> | void;
 }
 
@@ -129,7 +129,8 @@ export function ApplicationRoundsModal({
       notes: notes.trim()
     };
 
-    await onSaveRound(newRound);
+    const saved = await onSaveRound(newRound);
+    if (saved === false) return;
     setIsFormOpen(false);
     setEditingRound(null);
 

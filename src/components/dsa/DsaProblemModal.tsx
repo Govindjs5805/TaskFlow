@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { X, Code2, ExternalLink, Calendar, Clock, BookOpen } from "lucide-react";
 import type { DsaProblem, DsaDifficulty, DsaPlatform, DsaStatus, DsaTopic } from "../../types";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 
 const PLATFORMS: DsaPlatform[] = ["LeetCode", "GeeksforGeeks", "HackerRank", "Codeforces", "Other"];
 const DIFFICULTIES: DsaDifficulty[] = ["Easy", "Medium", "Hard"];
@@ -43,7 +43,7 @@ export function DsaProblemModal({ initial, onClose, onSave }: DsaProblemModalPro
   );
   const [solvedAt, setSolvedAt] = useState<string>(
     initial?.solved_at
-      ? initial.solved_at.slice(0, 10)
+      ? format(parseISO(initial.solved_at), "yyyy-MM-dd")
       : initial?.status === "Solved"
       ? format(new Date(), "yyyy-MM-dd")
       : ""

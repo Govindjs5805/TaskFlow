@@ -1,21 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard, CheckSquare, BriefcaseBusiness, CalendarDays, Bell, Moon, Sun,
   Plus, Search, Menu, X, Check, Trash2, Pencil, ExternalLink, Clock3, Target,
   TrendingUp, CircleAlert, LogOut, ChevronLeft, ChevronRight, Filter,
-  Kanban, List as ListIcon, Table as TableIcon, Layers, Code2
+  Kanban, List as ListIcon, Table as TableIcon, Layers, Code2, BarChart3
 } from "lucide-react";
 import { format, isToday, isTomorrow, isPast, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, isSameMonth, parseISO } from "date-fns";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type { Task, Application, EventItem, Priority, JobStatus, TaskStatus, ApplicationRound, DsaProblem } from "./types";
-import { TaskKanban } from "./components/kanban/TaskKanban";
-import { JobKanban } from "./components/kanban/JobKanban";
-import { ApplicationRoundsModal } from "./components/pipeline/ApplicationRoundsModal";
-import { NotificationSettingsBanner } from "./components/notifications/NotificationSettingsBanner";
-import { DsaTracker } from "./components/dsa/DsaTracker";
+const TaskKanban = lazy(() => import("./components/kanban/TaskKanban").then((module) => ({ default: module.TaskKanban })));
+const JobKanban = lazy(() => import("./components/kanban/JobKanban").then((module) => ({ default: module.JobKanban })));
+const ApplicationRoundsModal = lazy(() => import("./components/pipeline/ApplicationRoundsModal").then((module) => ({ default: module.ApplicationRoundsModal })));
+const NotificationSettingsBanner = lazy(() => import("./components/notifications/NotificationSettingsBanner").then((module) => ({ default: module.NotificationSettingsBanner })));
+const DsaTracker = lazy(() => import("./components/dsa/DsaTracker").then((module) => ({ default: module.DsaTracker })));
+const AnalyticsDashboard = lazy(() => import("./components/analytics/AnalyticsDashboard").then((module) => ({ default: module.AnalyticsDashboard })));
+import { DEFAULT_WEEKLY_GOALS, normalizeWeeklyGoals, type WeeklyGoals } from "./lib/analytics";
 import { registerServiceWorker, checkAndDispatchScheduledReminders } from "./lib/notifications";
 
-type Tab = "Overview" | "My Tasks" | "Job Tracker" | "DSA Tracker" | "Calendar" | "Reminders";
+type Tab = "Overview" | "My Tasks" | "Job Tracker" | "DSA Tracker" | "Analytics" | "Calendar" | "Reminders";
 const statuses: JobStatus[] = ["Applied","Assessment Scheduled","Assessment Completed","Interview Call","Technical Round","HR Round","Selected","Rejected","On Hold","Withdrawn"];
 const demoTasks: Task[] = [
   {id:"t1",title:"Complete two array problems",description:"Practice sliding window and hash map patterns",category:"Placement Prep",priority:"High",due_at:new Date(Date.now()+86400000).toISOString(),reminder_at:null,completed:false},
@@ -68,12 +70,13 @@ export default function App() {
   const [tab,setTab] = useState<Tab>("Overview");
   const [dark,setDark] = useState(localStorage.getItem("taskflow-theme")==="dark");
   const [mobileNav,setMobileNav] = useState(false);
-  const [tasks,setTasks] = useState<Task[]>(demoTasks);
-  const [apps,setApps] = useState<Application[]>(demoApps);
-  const [events,setEvents] = useState<EventItem[]>(demoEvents);
+  const [tasks,setTasks] = useState<Task[]>(isSupabaseConfigured?[]:demoTasks);
+  const [apps,setApps] = useState<Application[]>(isSupabaseConfigured?[]:demoApps);
+  const [events,setEvents] = useState<EventItem[]>(isSupabaseConfigured?[]:demoEvents);
   const [query,setQuery] = useState("");
   const [user,setUser] = useState<any>(null);
   const [authReady,setAuthReady] = useState(!isSupabaseConfigured);
+  const [workspaceLoading,setWorkspaceLoading] = useState(isSupabaseConfigured);
   const [showAuth,setShowAuth] = useState(false);
   const [toast,setToast] = useState("");
   const [taskModal,setTaskModal] = useState(false);
@@ -82,9 +85,10 @@ export default function App() {
   const [editingTask,setEditingTask] = useState<Task|null>(null);
   const [editingApp,setEditingApp] = useState<Application|null>(null);
   const [month,setMonth] = useState(new Date());
-  const [rounds,setRounds] = useState<ApplicationRound[]>(demoRounds);
+  const [rounds,setRounds] = useState<ApplicationRound[]>(isSupabaseConfigured?[]:demoRounds);
   const [dsaProblems,setDsaProblems] = useState<DsaProblem[]>([]);
   const [dsaLoading,setDsaLoading] = useState(false);
+  const [weeklyGoals,setWeeklyGoals] = useState<WeeklyGoals>(DEFAULT_WEEKLY_GOALS);
   const [selectedAppForRounds,setSelectedAppForRounds] = useState<Application|null>(null);
   const [taskViewMode,setTaskViewMode] = useState<"list"|"kanban">("list");
   const [jobViewMode,setJobViewMode] = useState<"table"|"kanban">("table");
@@ -112,25 +116,63 @@ export default function App() {
 
   useEffect(()=>{
     if(!supabase) return;
-    supabase.auth.getSession().then(({data})=>{setUser(data.session?.user ?? null);setAuthReady(true);});
-    const {data:{subscription}}=supabase.auth.onAuthStateChange((_e,session)=>setUser(session?.user??null));
+    supabase.auth.getSession().then(({data,error})=>{
+      if(error) notify(`Authentication check failed: ${error.message}`);
+      setUser(data.session?.user ?? null);
+      setAuthReady(true);
+    }).catch(error=>{
+      setAuthReady(true);
+      setWorkspaceLoading(false);
+      notify(error instanceof Error ? error.message : "Could not check your session");
+    });
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((_e,session)=>{
+      setUser(session?.user??null);
+      setAuthReady(true);
+    });
     return ()=>subscription.unsubscribe();
   },[]);
   useEffect(()=>{
-    if(!supabase || !user) return;
+    if(!supabase) return;
+    if(!authReady){setWorkspaceLoading(true);return;}
+    if(!user){
+      setTasks([]);
+      setApps([]);
+      setEvents([]);
+      setRounds([]);
+      setWorkspaceLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setWorkspaceLoading(true);
+    setTasks([]);
+    setApps([]);
+    setEvents([]);
+    setRounds([]);
     (async()=>{
-      const [t,a,e,r]=await Promise.all([
-        supabase!.from("tasks").select("*").order("created_at",{ascending:false}),
-        supabase!.from("applications").select("*").order("created_at",{ascending:false}),
-        supabase!.from("events").select("*").order("starts_at",{ascending:true}),
-        supabase!.from("application_rounds").select("*").order("scheduled_at",{ascending:true})
-      ]);
-      if(!t.error) setTasks(t.data as Task[]);
-      if(!a.error) setApps(a.data as Application[]);
-      if(!e.error) setEvents(e.data as EventItem[]);
-      if(!r.error && r.data) setRounds(r.data as ApplicationRound[]);
+      try {
+        const [t,a,e,r]=await Promise.all([
+          supabase!.from("tasks").select("*").eq("user_id",user.id).order("created_at",{ascending:false}),
+          supabase!.from("applications").select("*").eq("user_id",user.id).order("created_at",{ascending:false}),
+          supabase!.from("events").select("*").eq("user_id",user.id).order("starts_at",{ascending:true}),
+          supabase!.from("application_rounds").select("*").eq("user_id",user.id).order("scheduled_at",{ascending:true})
+        ]);
+        if(cancelled) return;
+        if(t.error) notify(`Could not load tasks: ${t.error.message}`);
+        else setTasks((t.data ?? []) as Task[]);
+        if(a.error) notify(`Could not load applications: ${a.error.message}`);
+        else setApps((a.data ?? []) as Application[]);
+        if(e.error) notify(`Could not load events: ${e.error.message}`);
+        else setEvents((e.data ?? []) as EventItem[]);
+        if(r.error) notify(`Could not load application rounds: ${r.error.message}`);
+        else setRounds((r.data ?? []) as ApplicationRound[]);
+      } catch(error) {
+        if(!cancelled) notify(error instanceof Error ? error.message : "Could not load your workspace data");
+      } finally {
+        if(!cancelled) setWorkspaceLoading(false);
+      }
     })();
-  },[user]);
+    return ()=>{cancelled = true;};
+  },[user?.id,authReady]);
 
   useEffect(()=>{
     if(!supabase) return;
@@ -160,17 +202,58 @@ export default function App() {
       }
     })();
     return ()=>{cancelled = true;};
-  },[user]);
+  },[user?.id]);
+
+  useEffect(()=>{
+    const userKey = user?.id ?? "preview";
+    const storageKey = `taskflow-weekly-goals:${userKey}`;
+    const stored = localStorage.getItem(storageKey);
+    let localGoals: unknown = null;
+    if(stored){
+      try { localGoals = JSON.parse(stored); } catch { localGoals = null; }
+    }
+    const cloudGoals = user?.user_metadata?.taskflow_weekly_goals;
+    const goals = normalizeWeeklyGoals(cloudGoals ?? localGoals);
+    setWeeklyGoals(goals);
+    if(cloudGoals) localStorage.setItem(storageKey,JSON.stringify(goals));
+  },[user?.id]);
 
   const notify=(s:string)=>{setToast(s);window.setTimeout(()=>setToast(""),2600);};
-  const persist = async (table:string, row:any, mode:"upsert"|"delete"="upsert") => {
-    if(!supabase || !user) return;
-    const result = mode==="delete"
-      ? await supabase.from(table).delete().eq("id",row.id)
-      : await supabase.from(table).upsert({...row,user_id:user.id});
-    if(result.error) notify(result.error.message);
+  const saveWeeklyGoals=async(goals:WeeklyGoals)=>{
+    const normalized = normalizeWeeklyGoals(goals);
+    const storageKey = `taskflow-weekly-goals:${user?.id ?? "preview"}`;
+    setWeeklyGoals(normalized);
+    localStorage.setItem(storageKey,JSON.stringify(normalized));
+    if(supabase && user){
+      try {
+        const {data,error} = await supabase.auth.updateUser({
+          data:{...(user.user_metadata ?? {}),taskflow_weekly_goals:normalized}
+        });
+        if(error){notify(`Goals saved on this device, but cloud sync failed: ${error.message}`);return;}
+        if(data.user) setUser(data.user);
+      } catch(error) {
+        notify(`Goals saved on this device, but cloud sync failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        return;
+      }
+    }
+    notify("Weekly goals saved");
+  };
+  const persist = async (table:string, row:any, mode:"upsert"|"delete"="upsert"):Promise<boolean> => {
+    if(!supabase) return true;
+    if(!user){notify("Sign in to save changes to your account.");return false;}
+    try {
+      const result = mode==="delete"
+        ? await supabase.from(table).delete().eq("id",row.id).eq("user_id",user.id)
+        : await supabase.from(table).upsert({...row,user_id:user.id});
+      if(result.error){notify(result.error.message);return false;}
+      return true;
+    } catch(error) {
+      notify(error instanceof Error ? error.message : "Could not save your changes");
+      return false;
+    }
   };
   const saveDsaProblem = async (problem:DsaProblem) => {
+    if(supabase && !user){notify("Sign in to save DSA problems.");throw new Error("Authentication required");}
     const existing = dsaProblems.find(item=>item.id===problem.id);
     const normalized: DsaProblem = {
       ...problem,
@@ -184,35 +267,43 @@ export default function App() {
     );
 
     if(supabase && user){
-      const {error} = await supabase.from("dsa_problems").upsert({ ...normalized, user_id:user.id });
-      if(error){
+      try {
+        const {error} = await supabase.from("dsa_problems").upsert({ ...normalized, user_id:user.id });
+        if(error) throw error;
+      } catch(error) {
         setDsaProblems(old=>existing
           ? old.map(item=>item.id===existing.id?existing:item)
           : old.filter(item=>item.id!==normalized.id)
         );
-        notify(error.message);
+        notify(error instanceof Error ? error.message : (error as {message?:string})?.message || "Could not save DSA problem");
         throw error;
       }
     }
     notify(existing ? "Problem updated" : "Problem added");
   };
   const removeDsaProblem = async (id:string) => {
+    if(supabase && !user){notify("Sign in to delete DSA problems.");throw new Error("Authentication required");}
     const existing = dsaProblems.find(item=>item.id===id);
     setDsaProblems(old=>old.filter(item=>item.id!==id));
     if(supabase && user){
-      const {error} = await supabase.from("dsa_problems").delete().eq("id",id).eq("user_id",user.id);
-      if(error){
+      try {
+        const {error} = await supabase.from("dsa_problems").delete().eq("id",id).eq("user_id",user.id);
+        if(error) throw error;
+      } catch(error) {
         if(existing) setDsaProblems(old=>old.some(item=>item.id===id)?old:[existing,...old]);
-        notify(error.message);
+        notify(error instanceof Error ? error.message : (error as {message?:string})?.message || "Could not delete DSA problem");
+        throw error;
       }
     }
   };
   const persistSubscription = async (subData: any, mode: "upsert" | "delete") => {
-    if (!supabase || !user) return;
+    if (!supabase || !user) throw new Error("Sign in to sync push subscriptions.");
+    let result;
     if (mode === "delete") {
-      await supabase.from("push_subscriptions").delete().eq("user_id", user.id);
+      if(!subData.endpoint) throw new Error("This device's push endpoint could not be identified.");
+      result = await supabase.from("push_subscriptions").delete().eq("user_id", user.id).eq("endpoint",subData.endpoint);
     } else {
-      await supabase.from("push_subscriptions").upsert({
+      result = await supabase.from("push_subscriptions").upsert({
         user_id: user.id,
         endpoint: subData.endpoint,
         p256dh: subData.p256dh,
@@ -220,6 +311,7 @@ export default function App() {
         user_agent: subData.user_agent || navigator.userAgent
       }, { onConflict: "user_id,endpoint" });
     }
+    if(result.error) throw result.error;
   };
   const saveTask=async (task:Task)=>{
     const normalizedTask: Task = {
@@ -227,10 +319,16 @@ export default function App() {
       status: task.status || (task.completed ? "completed" : "todo"),
       completed_at: task.completed ? (task.completed_at || new Date().toISOString()) : null
     };
-    setTasks(old=>editingTask?old.map(x=>x.id===normalizedTask.id?normalizedTask:x):[normalizedTask,...old]);
-    await persist("tasks",normalizedTask);setTaskModal(false);setEditingTask(null);notify("Task saved");
+    if(!await persist("tasks",normalizedTask)) return;
+    setTasks(old=>old.some(x=>x.id===normalizedTask.id)
+      ? old.map(x=>x.id===normalizedTask.id?normalizedTask:x)
+      : [normalizedTask,...old]);
+    setTaskModal(false);setEditingTask(null);notify("Task saved");
   };
-  const removeTask=async(id:string)=>{setTasks(x=>x.filter(t=>t.id!==id));await persist("tasks",{id},"delete");};
+  const removeTask=async(id:string)=>{
+    if(!await persist("tasks",{id},"delete")) return;
+    setTasks(x=>x.filter(t=>t.id!==id));
+  };
   const toggleTask=async(t:Task)=>{
     const willBeCompleted = !t.completed;
     const n: Task = {
@@ -239,8 +337,8 @@ export default function App() {
       status: willBeCompleted ? "completed" : "todo",
       completed_at: willBeCompleted ? (t.completed_at || new Date().toISOString()) : null
     };
+    if(!await persist("tasks",n)) return;
     setTasks(x=>x.map(y=>y.id===t.id?n:y));
-    await persist("tasks",n);
   };
   const moveTask=async(taskId:string,targetStatus:TaskStatus)=>{
     const isCompleted = targetStatus === "completed";
@@ -252,58 +350,78 @@ export default function App() {
       completed: isCompleted,
       completed_at: isCompleted ? (current.completed_at || new Date().toISOString()) : null
     };
+    if(!await persist("tasks",updated)) return;
     setTasks(old=>old.map(t=>t.id===taskId?updated:t));
-    await persist("tasks",updated);
     notify(`Task moved to ${targetStatus==="in_progress"?"In Progress":targetStatus==="todo"?"To Do":"Completed"}`);
   };
   const saveApp=async(a:Application)=>{
-    setApps(old=>editingApp?old.map(x=>x.id===a.id?a:x):[a,...old]);
-    await persist("applications",a);setAppModal(false);setEditingApp(null);notify("Application saved");
+    if(!await persist("applications",a)) return;
+    setApps(old=>old.some(x=>x.id===a.id)?old.map(x=>x.id===a.id?a:x):[a,...old]);
+    setAppModal(false);setEditingApp(null);notify("Application saved");
   };
   const removeApp=async(id:string)=>{
+    if(!await persist("applications",{id},"delete")) return;
     setApps(x=>x.filter(a=>a.id!==id));
     setRounds(x=>x.filter(r=>r.application_id!==id));
-    await persist("applications",{id},"delete");
   };
   const moveApplication=async(appId:string,newStatus:JobStatus)=>{
     const current = apps.find(a=>a.id===appId);
     if(!current) return;
     const updated: Application = { ...current, status: newStatus };
+    if(!await persist("applications",updated)) return;
     setApps(old=>old.map(a=>a.id===appId?updated:a));
-    await persist("applications",updated);
     notify(`Application moved to ${newStatus}`);
   };
-  const saveRound=async(round:ApplicationRound)=>{
+  const saveRound=async(round:ApplicationRound):Promise<boolean>=>{
+    if(!await persist("application_rounds",round)) return false;
     setRounds(old=>{
       const exists = old.some(r=>r.id===round.id);
       return exists ? old.map(r=>r.id===round.id?round:r) : [round,...old];
     });
-    await persist("application_rounds",round);
     notify("Round updated");
+    return true;
   };
-  const removeRound=async(id:string)=>{
+  const removeRound=async(id:string):Promise<boolean>=>{
+    if(!await persist("application_rounds",{id},"delete")) return false;
     setRounds(old=>old.filter(r=>r.id!==id));
-    await persist("application_rounds",{id},"delete");
     notify("Round removed");
+    return true;
   };
   const updateApplicationStatus=async(appId:string,newStatus:JobStatus)=>{
     const app = apps.find(a=>a.id===appId);
     if(!app) return;
     const updated: Application = { ...app, status: newStatus };
+    if(!await persist("applications",updated)) return;
     setApps(old=>old.map(a=>a.id===appId?updated:a));
-    await persist("applications",updated);
     notify(`Application status updated to ${newStatus}`);
   };
   const saveEvent=async(e:EventItem)=>{
-    setEvents(x=>[e,...x]);await persist("events",e);setEventModal(false);notify("Reminder added");
+    if(!await persist("events",e)) return;
+    setEvents(x=>[e,...x]);setEventModal(false);notify("Reminder added");
   };
-  const removeEvent=async(id:string)=>{setEvents(x=>x.filter(e=>e.id!==id));await persist("events",{id},"delete");};
+  const removeEvent=async(id:string)=>{
+    if(!await persist("events",{id},"delete")) return;
+    setEvents(x=>x.filter(e=>e.id!==id));
+  };
   const signIn=async(email:string,password:string,signup:boolean)=>{
     if(!supabase)return;
-    const res=signup?await supabase.auth.signUp({email,password}):await supabase.auth.signInWithPassword({email,password});
-    if(res.error)notify(res.error.message);else {setShowAuth(false);notify(signup?"Check your email to confirm your account":"Signed in");}
+    try {
+      const res=signup?await supabase.auth.signUp({email,password}):await supabase.auth.signInWithPassword({email,password});
+      if(res.error)notify(res.error.message);else {setShowAuth(false);notify(signup?"Check your email to confirm your account":"Signed in");}
+    } catch(error) {
+      notify(error instanceof Error ? error.message : "Could not complete authentication");
+    }
   };
-  const signOut=async()=>{await supabase?.auth.signOut();setUser(null);};
+  const signOut=async()=>{
+    if(!supabase){setUser(null);return;}
+    try {
+      const {error}=await supabase.auth.signOut();
+      if(error){notify(error.message);return;}
+      setUser(null);
+    } catch(error) {
+      notify(error instanceof Error ? error.message : "Could not sign out");
+    }
+  };
   const upcoming=useMemo(()=>[
     ...events.map(e=>({id:e.id,title:e.title,date:e.starts_at,kind:e.event_type,source:"event"})),
     ...tasks.filter(t=>!t.completed&&t.due_at).map(t=>({id:t.id,title:t.title,date:t.due_at!,kind:"Task due",source:"task"})),
@@ -329,7 +447,7 @@ export default function App() {
       <div className="brand"><div className="brand-icon"><Target size={21}/></div><span>TaskFlow</span><button className="mobile-close icon-btn" onClick={()=>setMobileNav(false)}><X size={18}/></button></div>
       <div className="workspace-label">WORKSPACE</div>
       <nav>{([
-        ["Overview",LayoutDashboard],["My Tasks",CheckSquare],["Job Tracker",BriefcaseBusiness],["DSA Tracker",Code2],["Calendar",CalendarDays],["Reminders",Bell]
+        ["Overview",LayoutDashboard],["My Tasks",CheckSquare],["Job Tracker",BriefcaseBusiness],["DSA Tracker",Code2],["Analytics",BarChart3],["Calendar",CalendarDays],["Reminders",Bell]
       ] as const).map(([label,Icon])=><button key={label} className={`nav-item ${tab===label?"active":""}`} onClick={()=>{setTab(label);setMobileNav(false);}}><Icon size={18}/><span>{label}</span>{label==="Reminders"&&upcoming.length>0&&<b className="nav-count">{upcoming.length}</b>}</button>)}</nav>
       <div className="sidebar-bottom">
         <div className="mini-tip"><div className="tip-icon"><TrendingUp size={17}/></div><b>Small steps add up.</b><p>Keep your momentum going, one task at a time.</p></div>
@@ -341,6 +459,7 @@ export default function App() {
     <main className="main">
       <header className="topbar"><div className="top-left"><button className="icon-btn mobile-menu" onClick={()=>setMobileNav(true)}><Menu/></button><div><div className="eyebrow">YOUR PERSONAL WORKSPACE</div><h1>{tab==="Overview"?"Good to see you":tab}</h1></div></div><div className="top-actions"><div className="searchbox"><Search size={16}/><input placeholder="Search tasks or jobs..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><button className="icon-btn theme-btn" onClick={()=>setDark(!dark)} title="Toggle theme">{dark?<Sun size={18}/>:<Moon size={18}/>}</button><button className="avatar profile" onClick={()=>isSupabaseConfigured?setShowAuth(true):notify("Add Supabase credentials to enable accounts.")}>{user?.email?.[0]?.toUpperCase()||"G"}</button></div></header>
       {!isSupabaseConfigured&&<div className="setup-banner"><CircleAlert size={17}/><span><b>Preview mode:</b> Add your Supabase project URL and anon key to <code>.env</code> to enable accounts and cloud sync. Your changes currently stay in this browser session.</span></div>}
+      {workspaceLoading&&<div className="workspace-loading" role="status">Loading your account data…</div>}
       {tab==="Overview"&&<section className="page">
         <div className="welcome-row"><div><p className="muted">Here’s your progress at a glance.</p><h2>Make today count.</h2></div><button className="primary-btn" onClick={()=>{setEditingTask(null);setTaskModal(true)}}><Plus size={17}/> Add a task</button></div>
         <div className="stats-grid">
@@ -386,27 +505,29 @@ export default function App() {
             {filteredTasks.length===0&&<Empty icon={<CheckSquare/>} title="No matching tasks" body="Try another search or create a new task."/>}
           </div>
         ) : (
-          <TaskKanban
-            tasks={filteredTasks}
-            onToggle={toggleTask}
-            onEdit={(t)=>{setEditingTask(t);setTaskModal(true);}}
-            onDelete={removeTask}
-            onMoveTask={moveTask}
-            onAddTask={(initialStatus)=>{
-              setEditingTask({
-                id:uid(),
-                title:"",
-                description:"",
-                category:"Personal",
-                priority:"Medium",
-                due_at:null,
-                reminder_at:null,
-                completed:initialStatus==="completed",
-                status:initialStatus||"todo"
-              });
-              setTaskModal(true);
-            }}
-          />
+          <Suspense fallback={<div className="panel">Loading task board…</div>}>
+            <TaskKanban
+              tasks={filteredTasks}
+              onToggle={toggleTask}
+              onEdit={(t)=>{setEditingTask(t);setTaskModal(true);}}
+              onDelete={removeTask}
+              onMoveTask={moveTask}
+              onAddTask={(initialStatus)=>{
+                setEditingTask({
+                  id:uid(),
+                  title:"",
+                  description:"",
+                  category:"Personal",
+                  priority:"Medium",
+                  due_at:null,
+                  reminder_at:null,
+                  completed:initialStatus==="completed",
+                  status:initialStatus||"todo"
+                });
+                setTaskModal(true);
+              }}
+            />
+          </Suspense>
         )}
       </section>}
       {tab==="Job Tracker"&&<section className="page">
@@ -441,7 +562,7 @@ export default function App() {
                     return <tr key={a.id}>
                       <td><div className="company-cell"><div className="company-logo">{a.company.slice(0,1).toUpperCase()}</div><div><b>{a.company}</b><span>{a.role}</span></div></div></td>
                       <td>{niceDate(a.applied_at)}</td>
-                      <td><select className={`status-select status-${a.status.toLowerCase().replaceAll(" ","-")}`} value={a.status} onChange={async e=>{const n={...a,status:e.target.value as JobStatus};setApps(old=>old.map(x=>x.id===a.id?n:x));await persist("applications",n);}}>{statuses.map(s=><option key={s}>{s}</option>)}</select></td>
+                      <td><select className={`status-select status-${a.status.toLowerCase().replaceAll(" ","-")}`} value={a.status} onChange={e=>moveApplication(a.id,e.target.value as JobStatus)}>{statuses.map(s=><option key={s}>{s}</option>)}</select></td>
                       <td>
                         <button
                           type="button"
@@ -464,38 +585,43 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <JobKanban
-            applications={filteredApps}
-            rounds={rounds}
-            onOpenRounds={(a)=>setSelectedAppForRounds(a)}
-            onEdit={(a)=>{setEditingApp(a);setAppModal(true);}}
-            onDelete={removeApp}
-            onMoveApplication={moveApplication}
-            onAddApplication={(initialStatus)=>{
-              setEditingApp({
-                id:uid(),
-                company:"",
-                role:"",
-                job_type:"Full-time",
-                applied_at:format(new Date(),"yyyy-MM-dd"),
-                job_url:"",
-                status:initialStatus||"Applied",
-                package_lpa:null,
-                next_step:"",
-                notes:""
-              });
-              setAppModal(true);
-            }}
-          />
+          <Suspense fallback={<div className="panel">Loading placement board…</div>}>
+            <JobKanban
+              applications={filteredApps}
+              rounds={rounds}
+              onOpenRounds={(a)=>setSelectedAppForRounds(a)}
+              onEdit={(a)=>{setEditingApp(a);setAppModal(true);}}
+              onDelete={removeApp}
+              onMoveApplication={moveApplication}
+              onAddApplication={(initialStatus)=>{
+                setEditingApp({
+                  id:uid(),
+                  company:"",
+                  role:"",
+                  job_type:"Full-time",
+                  applied_at:format(new Date(),"yyyy-MM-dd"),
+                  job_url:"",
+                  status:initialStatus||"Applied",
+                  package_lpa:null,
+                  next_step:"",
+                  notes:""
+                });
+                setAppModal(true);
+              }}
+            />
+          </Suspense>
         )}
       </section>}
-      {tab==="DSA Tracker"&&(dsaLoading
-        ? <section className="page"><div className="panel">Loading DSA problems…</div></section>
-        : <DsaTracker problems={dsaProblems} onSaveProblem={saveDsaProblem} onDeleteProblem={removeDsaProblem} onNotify={notify}/>
-      )}
+      {tab==="Analytics"&&<Suspense fallback={<section className="page"><div className="panel">Loading analytics…</div></section>}><AnalyticsDashboard tasks={tasks} problems={dsaProblems} applications={apps} goals={weeklyGoals} dsaLoading={dsaLoading} onSaveGoals={saveWeeklyGoals}/></Suspense>}
+      {tab==="DSA Tracker"&&<Suspense fallback={<section className="page"><div className="panel">Loading DSA tracker…</div></section>}>
+        {dsaLoading
+          ? <section className="page"><div className="panel">Loading DSA problems…</div></section>
+          : <DsaTracker problems={dsaProblems} onSaveProblem={saveDsaProblem} onDeleteProblem={removeDsaProblem} onNotify={notify}/>
+        }
+      </Suspense>}
       {tab==="Calendar"&&<section className="page"><div className="page-heading"><div><p className="muted">A clear view of what’s coming up.</p><h2>Your calendar</h2></div><button className="primary-btn" onClick={()=>setEventModal(true)}><Plus size={17}/> Add event</button></div><div className="calendar-layout"><div className="panel calendar-panel"><div className="calendar-top"><button className="icon-btn" onClick={()=>setMonth(subMonths(month,1))}><ChevronLeft/></button><h3>{format(month,"MMMM yyyy")}</h3><button className="icon-btn" onClick={()=>setMonth(addMonths(month,1))}><ChevronRight/></button></div><div className="calendar-grid">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span className="weekday" key={d}>{d}</span>)}{Array.from({length:(startOfMonth(month).getDay()+6)%7},(_,i)=><span key={"blank"+i}/>)}{eachDayOfInterval({start:startOfMonth(month),end:endOfMonth(month)}).map(d=>{const dayEvents=[...events.filter(e=>format(parseISO(e.starts_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")), ...tasks.filter(t=>t.due_at&&format(parseISO(t.due_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")), ...rounds.filter(r=>r.scheduled_at&&format(parseISO(r.scheduled_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")).map(r=>{const p=apps.find(a=>a.id===r.application_id);return {id:r.id,title:`${p?p.company+": ":""}${r.round_name||r.round_type}`,starts_at:r.scheduled_at!,event_type:r.round_type};})];return <button key={d.toISOString()} className={`calendar-day ${isToday(d)?"today":""} ${!isSameMonth(d,month)?"outside":""}`} onClick={()=>dayEvents.length?notify(dayEvents.map(x=>x.title).join(" · ")):null}><span>{format(d,"d")}</span>{dayEvents.length>0&&<i/>}</button>})}</div><div className="calendar-legend"><span><i className="legend-blue"/> Events</span><span><i className="legend-purple"/> Task due dates</span><span><i style={{background:"#e49a51"}}/> Interview/OA rounds</span></div></div><div className="panel"><div className="panel-head"><div><h3>Schedule</h3><p className="muted">Upcoming dates</p></div></div>{upcoming.map(x=><div className="schedule-item" key={x.id}><div className="schedule-time">{format(parseISO(x.date),"dd MMM")}<small>{format(parseISO(x.date),"h:mm a")}</small></div><div><b>{x.title}</b><span>{x.kind}</span></div></div>)}</div></div></section>}
       {tab==="Reminders"&&<section className="page"><div className="page-heading"><div><p className="muted">Never miss an assessment, interview or deadline.</p><h2>Reminders</h2></div><button className="primary-btn" onClick={()=>setEventModal(true)}><Plus size={17}/> Add reminder</button></div>
-      <NotificationSettingsBanner user={user} onNotify={notify} onPersistSubscription={persistSubscription} />
+      <Suspense fallback={<div className="notif-settings-card">Loading notification settings…</div>}><NotificationSettingsBanner user={user} onNotify={notify} onPersistSubscription={persistSubscription} /></Suspense>
       <div className="panel">{[
         ...events.map(e=>({id:e.id,title:e.title,type:e.event_type,time:e.starts_at,notes:e.notes,isPast:isPast(parseISO(e.starts_at)),source:"event" as const,onDelete:()=>removeEvent(e.id)})),
         ...rounds.filter(r=>r.scheduled_at).map(r=>{
@@ -518,7 +644,7 @@ export default function App() {
     {taskModal&&<TaskDialog initial={editingTask} onClose={()=>{setTaskModal(false);setEditingTask(null)}} onSave={saveTask}/>}
     {appModal&&<ApplicationDialog initial={editingApp} onClose={()=>{setAppModal(false);setEditingApp(null)}} onSave={saveApp}/>}
     {eventModal&&<EventDialog apps={apps} onClose={()=>setEventModal(false)} onSave={saveEvent}/>}
-    {selectedAppForRounds&&<ApplicationRoundsModal application={selectedAppForRounds} rounds={rounds} onClose={()=>setSelectedAppForRounds(null)} onSaveRound={saveRound} onDeleteRound={removeRound} onUpdateApplicationStatus={updateApplicationStatus}/>}
+    {selectedAppForRounds&&<Suspense fallback={<div className="modal-backdrop"><div className="modal">Loading application rounds…</div></div>}><ApplicationRoundsModal application={selectedAppForRounds} rounds={rounds} onClose={()=>setSelectedAppForRounds(null)} onSaveRound={saveRound} onDeleteRound={removeRound} onUpdateApplicationStatus={updateApplicationStatus}/></Suspense>}
     {showAuth&&<AuthDialog onClose={()=>setShowAuth(false)} onSubmit={signIn}/>}
     {toast&&<div className="toast">{toast}</div>}
   </div>;

@@ -13,7 +13,8 @@ import {
   unsubscribeFromPush,
   getExistingPushSubscription,
   isNotificationSupported,
-  isPushSupported
+  isPushSupported,
+  isVapidPublicKeyConfigured
 } from "../../lib/notifications";
 
 interface NotificationSettingsBannerProps {
@@ -44,19 +45,25 @@ export function NotificationSettingsBanner({
 
   const handleToggleEnable = async () => {
     if (permission !== "granted") {
-      const newPerm = await requestNotificationPermission();
-      setPermission(newPerm);
-      if (newPerm === "granted") {
-        setIsEnabled(true);
-        setUserNotificationsEnabled(true);
-        onNotify("Browser notifications enabled!");
-        await showLocalNotification("Notifications Active", {
-          body: "TaskFlow will alert you when tasks, interviews, and deadlines approach.",
-          tag: "welcome-alert",
-          url: "/#reminders"
-        });
-      } else if (newPerm === "denied") {
-        onNotify("Notifications blocked in browser settings. Please allow notifications in site settings.");
+      try {
+        const newPerm = await requestNotificationPermission();
+        setPermission(newPerm);
+        if (newPerm === "granted") {
+          setIsEnabled(true);
+          setUserNotificationsEnabled(true);
+          onNotify("Browser notifications enabled!");
+          await showLocalNotification("Notifications Active", {
+            body: "TaskFlow will alert you when tasks, interviews, and deadlines approach.",
+            tag: "welcome-alert",
+            url: "/#reminders"
+          });
+        } else if (newPerm === "denied") {
+          onNotify(isNotificationSupported()
+            ? "Notifications blocked in browser settings. Please allow notifications in site settings."
+            : "This browser does not support notifications.");
+        }
+      } catch (error) {
+        onNotify(error instanceof Error ? error.message : "Could not request notification permission.");
       }
     } else {
       const nextState = !isEnabled;
@@ -85,24 +92,30 @@ export function NotificationSettingsBanner({
       return;
     }
 
-    if (permission !== "granted") {
-      const p = await requestNotificationPermission();
-      setPermission(p);
-      if (p !== "granted") {
-        onNotify("Permission required to register push subscriptions.");
-        return;
-      }
+    if (!hasPushSub && !isVapidPublicKeyConfigured()) {
+      onNotify("Background push requires a configured VAPID public key.");
+      return;
     }
 
     setIsSubscribing(true);
     try {
+      if (permission !== "granted") {
+        const p = await requestNotificationPermission();
+        setPermission(p);
+        if (p !== "granted") {
+          onNotify("Permission required to register push subscriptions.");
+          return;
+        }
+      }
+
       if (hasPushSub) {
         // Unsubscribe
+        const currentSubscription = await getExistingPushSubscription();
         const unsubOk = await unsubscribeFromPush();
         if (unsubOk) {
           setHasPushSub(false);
-          if (user) {
-            await onPersistSubscription({ endpoint: "current" }, "delete");
+          if (user && currentSubscription?.endpoint) {
+            await onPersistSubscription({ endpoint: currentSubscription.endpoint }, "delete");
           }
           onNotify("Device unsubscribed from background push.");
         }
@@ -121,6 +134,8 @@ export function NotificationSettingsBanner({
           onNotify("Failed to subscribe device to push service.");
         }
       }
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "Could not update this device's push subscription.");
     } finally {
       setIsSubscribing(false);
     }

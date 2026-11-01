@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "npm run test:analytics && npm run test:audit",
+    "test:analytics": "node scripts/test-analytics.mjs",
+    "test:audit": "node scripts/test-audit.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

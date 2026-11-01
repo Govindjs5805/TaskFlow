@@ -112,7 +112,7 @@ export function DsaTracker({
         searchQuery.trim() === "" ||
         p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.topic.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.notes.toLowerCase().includes(searchQuery.toLowerCase());
+        (p.notes ?? "").toLowerCase().includes(searchQuery.toLowerCase());
 
       const matchesPlatform = selectedPlatform === "All" || p.platform === selectedPlatform;
       const matchesDifficulty = selectedDifficulty === "All" || p.difficulty === selectedDifficulty;
@@ -145,14 +145,22 @@ export function DsaTracker({
         ? (p.status === "Solved" && p.solved_at ? p.solved_at : new Date().toISOString())
         : p.solved_at
     };
-    await onSaveProblem(updated);
-    onNotify(`Status updated to ${nextStatus}`);
+    try {
+      await onSaveProblem(updated);
+      onNotify(`Status updated to ${nextStatus}`);
+    } catch {
+      // The parent reports the persistence error and restores its previous row.
+    }
   };
 
   const handleDelete = async (id: string, title: string) => {
     if (window.confirm(`Delete "${title}"?`)) {
-      await onDeleteProblem(id);
-      onNotify("Problem deleted");
+      try {
+        await onDeleteProblem(id);
+        onNotify("Problem deleted");
+      } catch {
+        // The parent reports the persistence error and restores the deleted row.
+      }
     }
   };
 
@@ -482,6 +490,7 @@ export function DsaTracker({
                         <option value="Attempted">Attempted</option>
                         <option value="Solved">Solved</option>
                         <option value="Revisit">Revisit</option>
+                        <option value="Need Revision">Need Revision</option>
                       </select>
                     </td>
 
@@ -666,6 +675,7 @@ export function DsaTracker({
                     <option value="Attempted">Attempted</option>
                     <option value="Solved">Solved</option>
                     <option value="Revisit">Revisit</option>
+                    <option value="Need Revision">Need Revision</option>
                   </select>
 
                   <div className="dsa-card-timing">
@@ -728,9 +738,13 @@ export function DsaTracker({
             setEditingProblem(null);
           }}
           onSave={async (saved) => {
-            await onSaveProblem(saved);
-            setIsModalOpen(false);
-            setEditingProblem(null);
+            try {
+              await onSaveProblem(saved);
+              setIsModalOpen(false);
+              setEditingProblem(null);
+            } catch {
+              // Keep the editor open so the user can retry after a save failure.
+            }
           }}
         />
       )}

@@ -5,10 +5,6 @@ import { format, parseISO, isPast, differenceInMinutes } from "date-fns";
 const STORAGE_NOTIFIED_KEY = "taskflow_notified_reminders";
 const STORAGE_ENABLED_KEY = "taskflow_notifications_enabled";
 
-// Demo VAPID public key fallback (Base64URL encoded P-256 uncompressed point)
-const DEFAULT_VAPID_PUBLIC_KEY =
-  "BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBKr3qBUYIHBQFLXYp5Nksh8U";
-
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -32,6 +28,10 @@ export function isPushSupported(): boolean {
     "serviceWorker" in navigator &&
     "PushManager" in window
   );
+}
+
+export function isVapidPublicKeyConfigured(): boolean {
+  return Boolean(import.meta.env.VITE_VAPID_PUBLIC_KEY?.trim());
 }
 
 /** Get current browser permission: 'default' | 'granted' | 'denied' */
@@ -147,10 +147,8 @@ export async function subscribeToPush(
     }
     if (!reg) return null;
 
-    const vapidKey =
-      customVapidKey ||
-      import.meta.env.VITE_VAPID_PUBLIC_KEY ||
-      DEFAULT_VAPID_PUBLIC_KEY;
+    const vapidKey = customVapidKey?.trim() || import.meta.env.VITE_VAPID_PUBLIC_KEY?.trim();
+    if (!vapidKey) return null;
 
     let sub = await reg.pushManager.getSubscription();
     if (!sub) {
