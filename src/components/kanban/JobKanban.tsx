@@ -27,35 +27,35 @@ const PIPELINE_COLUMNS: PipelineColumn[] = [
   {
     id: "applied",
     title: "Applied",
-    color: "#6658d9",
+    color: "var(--primary)",
     defaultStatus: "Applied",
     matchingStatuses: ["Applied"]
   },
   {
     id: "assessment",
     title: "Assessment",
-    color: "#e49a51",
+    color: "var(--warning)",
     defaultStatus: "Assessment Scheduled",
     matchingStatuses: ["Assessment Scheduled", "Assessment Completed"]
   },
   {
     id: "interview",
     title: "Interview",
-    color: "#4d8bdc",
+    color: "var(--info)",
     defaultStatus: "Interview Call",
     matchingStatuses: ["Interview Call", "Technical Round", "HR Round"]
   },
   {
     id: "selected",
     title: "Selected / Offer",
-    color: "#45a779",
+    color: "var(--success)",
     defaultStatus: "Selected",
     matchingStatuses: ["Selected"]
   },
   {
     id: "archived",
     title: "Archived",
-    color: "#85899e",
+    color: "var(--muted)",
     defaultStatus: "Rejected",
     matchingStatuses: ["Rejected", "On Hold", "Withdrawn"]
   }

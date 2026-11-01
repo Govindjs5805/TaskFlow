@@ -132,7 +132,7 @@ export function AnalyticsDashboard({
           label="Tasks completed"
           value={taskStats.completed}
           detail={changeLabel(taskStats.completed, taskStats.previousWeekCompleted)}
-          tone="purple"
+          tone="green"
         />
         <StatCard
           icon={<TrendingUp size={19} />}
@@ -146,14 +146,14 @@ export function AnalyticsDashboard({
           label="DSA problems solved"
           value={dsaLoading ? "…" : dsaStats.solved}
           detail={dsaLoading ? "Loading problems" : changeLabel(dsaStats.solved, dsaStats.previousWeekSolved)}
-          tone="blue"
+          tone="green"
         />
         <StatCard
           icon={<BriefcaseBusiness size={19} />}
           label="Applications tracked"
           value={placement.total}
           detail={`${placement.interviews} interview · ${placement.assessments} assessment stages`}
-          tone="orange"
+          tone="green"
         />
       </div>
 

@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   LayoutDashboard, CheckSquare, BriefcaseBusiness, CalendarDays, Bell, Moon, Sun,
   Plus, Search, Menu, X, Check, Trash2, Pencil, ExternalLink, Clock3, Target,
@@ -66,9 +67,19 @@ const niceDate = (s?: string | null) => s ? format(parseISO(s), "dd MMM yyyy") :
 const dateTimeLocal = (s?: string | null) => s ? format(parseISO(s), "yyyy-MM-dd'T'HH:mm") : "";
 const localIso = (s: string) => s ? new Date(s).toISOString() : null;
 
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (update: () => void) => { finished: Promise<void> };
+};
+
 export default function App() {
   const [tab,setTab] = useState<Tab>("Overview");
-  const [dark,setDark] = useState(localStorage.getItem("taskflow-theme")==="dark");
+  const [dark,setDark] = useState(()=>{
+    try { return localStorage.getItem("taskflow-theme")==="dark"; }
+    catch { return false; }
+  });
+  const [themeFallback,setThemeFallback] = useState(false);
+  const themeButtonRef = useRef<HTMLButtonElement>(null);
+  const themeTransitionRef = useRef(false);
   const [mobileNav,setMobileNav] = useState(false);
   const [tasks,setTasks] = useState<Task[]>(isSupabaseConfigured?[]:demoTasks);
   const [apps,setApps] = useState<Application[]>(isSupabaseConfigured?[]:demoApps);
@@ -93,7 +104,63 @@ export default function App() {
   const [taskViewMode,setTaskViewMode] = useState<"list"|"kanban">("list");
   const [jobViewMode,setJobViewMode] = useState<"table"|"kanban">("table");
 
-  useEffect(()=>{ localStorage.setItem("taskflow-theme",dark?"dark":"light"); },[dark]);
+  useEffect(()=>{
+    try { localStorage.setItem("taskflow-theme",dark?"dark":"light"); }
+    catch { /* The selected theme still applies for this session when storage is unavailable. */ }
+  },[dark]);
+  const toggleTheme = () => {
+    if (themeTransitionRef.current) return;
+    const nextDark = !dark;
+    const prefersReducedMotion = typeof window.matchMedia==="function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const applyTheme = () => {
+      document.documentElement.dataset.theme=nextDark?"dark":"light";
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content",nextDark?"#000000":"#FFFFFF");
+      flushSync(()=>setDark(nextDark));
+      try { localStorage.setItem("taskflow-theme",nextDark?"dark":"light"); }
+      catch { /* Keep the in-memory theme change even when storage is unavailable. */ }
+    };
+    const finishTransition = () => {
+      themeTransitionRef.current = false;
+      document.documentElement.style.removeProperty("--theme-reveal-x");
+      document.documentElement.style.removeProperty("--theme-reveal-y");
+      document.documentElement.style.removeProperty("--theme-reveal-radius");
+      setThemeFallback(false);
+    };
+
+    if (prefersReducedMotion) {
+      applyTheme();
+      return;
+    }
+
+    const bounds = themeButtonRef.current?.getBoundingClientRect();
+    const viewTransitionDocument = document as ViewTransitionDocument;
+    if (bounds && viewTransitionDocument.startViewTransition) {
+      const centerX = bounds.left + bounds.width / 2;
+      const centerY = bounds.top + bounds.height / 2;
+      const radius = Math.hypot(
+        Math.max(centerX, window.innerWidth - centerX),
+        Math.max(centerY, window.innerHeight - centerY)
+      );
+      document.documentElement.style.setProperty("--theme-reveal-x",`${centerX}px`);
+      document.documentElement.style.setProperty("--theme-reveal-y",`${centerY}px`);
+      document.documentElement.style.setProperty("--theme-reveal-radius",`${radius}px`);
+      themeTransitionRef.current = true;
+      try {
+        const transition = viewTransitionDocument.startViewTransition(applyTheme);
+        void transition.finished.catch(()=>undefined).finally(finishTransition);
+      } catch {
+        finishTransition();
+        applyTheme();
+      }
+      return;
+    }
+
+    // Older browsers get a short color transition; reduced-motion users get an instant update above.
+    themeTransitionRef.current = true;
+    setThemeFallback(true);
+    applyTheme();
+    window.setTimeout(finishTransition,220);
+  };
   useEffect(()=>{ registerServiceWorker(); },[]);
   useEffect(()=>{
     checkAndDispatchScheduledReminders({ tasks, events, rounds, apps });
@@ -442,7 +509,7 @@ export default function App() {
   const filteredTasks=tasks.filter(t=>(t.title+" "+t.category+" "+t.description).toLowerCase().includes(query.toLowerCase()));
   const filteredApps=apps.filter(a=>(a.company+" "+a.role+" "+a.status).toLowerCase().includes(query.toLowerCase()));
 
-  return <div className={dark?"app dark":"app"}>
+  return <div className={`app${dark?" dark":""}${themeFallback?" theme-fallback":""}`}>
     <aside className={`sidebar ${mobileNav?"show":""}`}>
       <div className="brand"><div className="brand-icon"><Target size={21}/></div><span>TaskFlow</span><button className="mobile-close icon-btn" onClick={()=>setMobileNav(false)}><X size={18}/></button></div>
       <div className="workspace-label">WORKSPACE</div>
@@ -457,15 +524,15 @@ export default function App() {
     </aside>
     {mobileNav&&<div className="scrim" onClick={()=>setMobileNav(false)}/>}
     <main className="main">
-      <header className="topbar"><div className="top-left"><button className="icon-btn mobile-menu" onClick={()=>setMobileNav(true)}><Menu/></button><div><div className="eyebrow">YOUR PERSONAL WORKSPACE</div><h1>{tab==="Overview"?"Good to see you":tab}</h1></div></div><div className="top-actions"><div className="searchbox"><Search size={16}/><input placeholder="Search tasks or jobs..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><button className="icon-btn theme-btn" onClick={()=>setDark(!dark)} title="Toggle theme">{dark?<Sun size={18}/>:<Moon size={18}/>}</button><button className="avatar profile" onClick={()=>isSupabaseConfigured?setShowAuth(true):notify("Add Supabase credentials to enable accounts.")}>{user?.email?.[0]?.toUpperCase()||"G"}</button></div></header>
+      <header className="topbar"><div className="top-left"><button className="icon-btn mobile-menu" onClick={()=>setMobileNav(true)}><Menu/></button><div><div className="eyebrow">YOUR PERSONAL WORKSPACE</div><h1>{tab==="Overview"?"Good to see you":tab}</h1></div></div><div className="top-actions"><div className="searchbox"><Search size={16}/><input placeholder="Search tasks or jobs..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><button ref={themeButtonRef} className="icon-btn theme-btn" onClick={toggleTheme} title={dark?"Switch to light theme":"Switch to dark theme"} aria-label={dark?"Switch to light theme":"Switch to dark theme"} aria-pressed={dark}>{dark?<Sun size={18}/>:<Moon size={18}/>}</button><button className="avatar profile" onClick={()=>isSupabaseConfigured?setShowAuth(true):notify("Add Supabase credentials to enable accounts.")}>{user?.email?.[0]?.toUpperCase()||"G"}</button></div></header>
       {!isSupabaseConfigured&&<div className="setup-banner"><CircleAlert size={17}/><span><b>Preview mode:</b> Add your Supabase project URL and anon key to <code>.env</code> to enable accounts and cloud sync. Your changes currently stay in this browser session.</span></div>}
       {workspaceLoading&&<div className="workspace-loading" role="status">Loading your account data…</div>}
       {tab==="Overview"&&<section className="page">
         <div className="welcome-row"><div><p className="muted">Here’s your progress at a glance.</p><h2>Make today count.</h2></div><button className="primary-btn" onClick={()=>{setEditingTask(null);setTaskModal(true)}}><Plus size={17}/> Add a task</button></div>
         <div className="stats-grid">
-          <Stat icon={<CheckSquare/>} label="Open tasks" value={pending.length} hint={`${completed.length} completed`} tone="purple"/>
-          <Stat icon={<BriefcaseBusiness/>} label="Active applications" value={activeApps.length} hint={`${apps.length} total tracked`} tone="blue"/>
-          <Stat icon={<CalendarDays/>} label="Upcoming events" value={upcoming.length} hint="Tasks, exams & interviews" tone="orange"/>
+          <Stat icon={<CheckSquare/>} label="Open tasks" value={pending.length} hint={`${completed.length} completed`} tone="green"/>
+          <Stat icon={<BriefcaseBusiness/>} label="Active applications" value={activeApps.length} hint={`${apps.length} total tracked`} tone="green"/>
+          <Stat icon={<CalendarDays/>} label="Upcoming events" value={upcoming.length} hint="Tasks, exams & interviews" tone="green"/>
           <Stat icon={<TrendingUp/>} label="Selected" value={apps.filter(a=>a.status==="Selected").length} hint="Offers received" tone="green"/>
         </div>
         <div className="dashboard-grid">
@@ -619,7 +686,7 @@ export default function App() {
           : <DsaTracker problems={dsaProblems} onSaveProblem={saveDsaProblem} onDeleteProblem={removeDsaProblem} onNotify={notify}/>
         }
       </Suspense>}
-      {tab==="Calendar"&&<section className="page"><div className="page-heading"><div><p className="muted">A clear view of what’s coming up.</p><h2>Your calendar</h2></div><button className="primary-btn" onClick={()=>setEventModal(true)}><Plus size={17}/> Add event</button></div><div className="calendar-layout"><div className="panel calendar-panel"><div className="calendar-top"><button className="icon-btn" onClick={()=>setMonth(subMonths(month,1))}><ChevronLeft/></button><h3>{format(month,"MMMM yyyy")}</h3><button className="icon-btn" onClick={()=>setMonth(addMonths(month,1))}><ChevronRight/></button></div><div className="calendar-grid">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span className="weekday" key={d}>{d}</span>)}{Array.from({length:(startOfMonth(month).getDay()+6)%7},(_,i)=><span key={"blank"+i}/>)}{eachDayOfInterval({start:startOfMonth(month),end:endOfMonth(month)}).map(d=>{const dayEvents=[...events.filter(e=>format(parseISO(e.starts_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")), ...tasks.filter(t=>t.due_at&&format(parseISO(t.due_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")), ...rounds.filter(r=>r.scheduled_at&&format(parseISO(r.scheduled_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")).map(r=>{const p=apps.find(a=>a.id===r.application_id);return {id:r.id,title:`${p?p.company+": ":""}${r.round_name||r.round_type}`,starts_at:r.scheduled_at!,event_type:r.round_type};})];return <button key={d.toISOString()} className={`calendar-day ${isToday(d)?"today":""} ${!isSameMonth(d,month)?"outside":""}`} onClick={()=>dayEvents.length?notify(dayEvents.map(x=>x.title).join(" · ")):null}><span>{format(d,"d")}</span>{dayEvents.length>0&&<i/>}</button>})}</div><div className="calendar-legend"><span><i className="legend-blue"/> Events</span><span><i className="legend-purple"/> Task due dates</span><span><i style={{background:"#e49a51"}}/> Interview/OA rounds</span></div></div><div className="panel"><div className="panel-head"><div><h3>Schedule</h3><p className="muted">Upcoming dates</p></div></div>{upcoming.map(x=><div className="schedule-item" key={x.id}><div className="schedule-time">{format(parseISO(x.date),"dd MMM")}<small>{format(parseISO(x.date),"h:mm a")}</small></div><div><b>{x.title}</b><span>{x.kind}</span></div></div>)}</div></div></section>}
+      {tab==="Calendar"&&<section className="page"><div className="page-heading"><div><p className="muted">A clear view of what’s coming up.</p><h2>Your calendar</h2></div><button className="primary-btn" onClick={()=>setEventModal(true)}><Plus size={17}/> Add event</button></div><div className="calendar-layout"><div className="panel calendar-panel"><div className="calendar-top"><button className="icon-btn" onClick={()=>setMonth(subMonths(month,1))}><ChevronLeft/></button><h3>{format(month,"MMMM yyyy")}</h3><button className="icon-btn" onClick={()=>setMonth(addMonths(month,1))}><ChevronRight/></button></div><div className="calendar-grid">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span className="weekday" key={d}>{d}</span>)}{Array.from({length:(startOfMonth(month).getDay()+6)%7},(_,i)=><span key={"blank"+i}/>)}{eachDayOfInterval({start:startOfMonth(month),end:endOfMonth(month)}).map(d=>{const dayEvents=[...events.filter(e=>format(parseISO(e.starts_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")), ...tasks.filter(t=>t.due_at&&format(parseISO(t.due_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")), ...rounds.filter(r=>r.scheduled_at&&format(parseISO(r.scheduled_at),"yyyy-MM-dd")===format(d,"yyyy-MM-dd")).map(r=>{const p=apps.find(a=>a.id===r.application_id);return {id:r.id,title:`${p?p.company+": ":""}${r.round_name||r.round_type}`,starts_at:r.scheduled_at!,event_type:r.round_type};})];return <button key={d.toISOString()} className={`calendar-day ${isToday(d)?"today":""} ${!isSameMonth(d,month)?"outside":""}`} onClick={()=>dayEvents.length?notify(dayEvents.map(x=>x.title).join(" · ")):null}><span>{format(d,"d")}</span>{dayEvents.length>0&&<i/>}</button>})}</div><div className="calendar-legend"><span><i className="legend-blue"/> Events</span><span><i className="legend-purple"/> Task due dates</span><span><i style={{background:"var(--primary)"}}/> Interview/OA rounds</span></div></div><div className="panel"><div className="panel-head"><div><h3>Schedule</h3><p className="muted">Upcoming dates</p></div></div>{upcoming.map(x=><div className="schedule-item" key={x.id}><div className="schedule-time">{format(parseISO(x.date),"dd MMM")}<small>{format(parseISO(x.date),"h:mm a")}</small></div><div><b>{x.title}</b><span>{x.kind}</span></div></div>)}</div></div></section>}
       {tab==="Reminders"&&<section className="page"><div className="page-heading"><div><p className="muted">Never miss an assessment, interview or deadline.</p><h2>Reminders</h2></div><button className="primary-btn" onClick={()=>setEventModal(true)}><Plus size={17}/> Add reminder</button></div>
       <Suspense fallback={<div className="notif-settings-card">Loading notification settings…</div>}><NotificationSettingsBanner user={user} onNotify={notify} onPersistSubscription={persistSubscription} /></Suspense>
       <div className="panel">{[

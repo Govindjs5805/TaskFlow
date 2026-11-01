@@ -13,9 +13,9 @@ interface TaskKanbanProps {
 }
 
 const COLUMNS: { id: TaskStatus; title: string; color: string }[] = [
-  { id: "todo", title: "To Do", color: "#6658d9" },
-  { id: "in_progress", title: "In Progress", color: "#e49a51" },
-  { id: "completed", title: "Completed", color: "#45a779" }
+  { id: "todo", title: "To Do", color: "var(--primary)" },
+  { id: "in_progress", title: "In Progress", color: "var(--warning)" },
+  { id: "completed", title: "Completed", color: "var(--success)" }
 ];
 
 const niceDate = (s?: string | null) => (s ? format(parseISO(s), "dd MMM yyyy") : null);

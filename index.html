@@ -3,9 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f7f8fc" />
+    <meta name="theme-color" content="#FFFFFF" />
     <meta name="description" content="TaskFlow — your tasks, applications and important dates in one place." />
     <title>TaskFlow</title>
+    <script>
+      try {
+        const initialTheme = localStorage.getItem("taskflow-theme") === "dark" ? "dark" : "light";
+        document.documentElement.dataset.theme = initialTheme;
+        document.querySelector('meta[name="theme-color"]')?.setAttribute("content", initialTheme === "dark" ? "#000000" : "#FFFFFF");
+      } catch { /* The app falls back to light mode if browser storage is unavailable. */ }
+    </script>
+    <style>
+      html, body { background: #FFFFFF; }
+      html[data-theme="dark"], html[data-theme="dark"] body { background: #000000; color: #FFFFFF; color-scheme: dark; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

@@ -14,6 +14,7 @@ const worker = read("../public/sw.js");
 const baseSchema = read("../supabase/schema.sql");
 const migration = read("../supabase/migrations_v2.sql");
 const css = read("../src/styles.css");
+const html = read("../index.html");
 
 const assertOwnerPolicy = (sql, table) => {
   const policy = sql.split(";").find((statement) =>
@@ -60,6 +61,37 @@ assert.match(dsa, /\(p\.notes \?\? ""\)\.toLowerCase\(\)/, "nullable DSA notes m
 assert.equal((dsa.match(/<option value="Need Revision">/g) ?? []).length, 2, "both DSA views must support Need Revision status");
 assert.match(dsaModal, /format\(parseISO\(initial\.solved_at\), "yyyy-MM-dd"\)/, "saved DSA dates must be edited in local time");
 assert.match(css, /\.app\.dark/, "dark theme styles must remain present");
+for (const token of [
+  "--bg:#FFFFFF", "--surface:#FFFFFF", "--surface2:#F5F5F5", "--text:#000000",
+  "--muted:#525252", "--line:#E5E5E5", "--primary:#000000", "--on-primary:#FFFFFF",
+  "--bg:#000000", "--surface:#111111", "--surface2:#171717", "--text:#FFFFFF",
+  "--muted:#A3A3A3", "--line:#333333", "--primary:#FFFFFF", "--on-primary:#000000",
+  "--chart-secondary:#737373", "--chart-secondary:#A3A3A3"
+]) assert.ok(css.includes(token), `central theme palette must include ${token}`);
+assert.match(html, /localStorage\.getItem\("taskflow-theme"\)/, "saved theme must be read before React mounts to avoid a flash");
+assert.match(html, /document\.documentElement\.dataset\.theme\s*=\s*initialTheme/, "the initial root theme must match the saved preference");
+assert.match(app, /themeButtonRef\.current\?\.getBoundingClientRect\(\)/, "theme reveal must measure the clicked theme button");
+assert.match(app, /bounds\.left\s*\+\s*bounds\.width\s*\/\s*2/, "theme reveal must originate at the button's horizontal center");
+assert.match(app, /bounds\.top\s*\+\s*bounds\.height\s*\/\s*2/, "theme reveal must originate at the button's vertical center");
+assert.match(app, /startViewTransition\(applyTheme\)/, "supported browsers must use the View Transition API");
+assert.match(app, /prefers-reduced-motion:\s*reduce/, "reduced-motion preferences must bypass the reveal");
+assert.match(app, /themeTransitionRef\.current\) return/, "rapid clicks must not overlap theme transitions");
+assert.match(app, /localStorage\.setItem\("taskflow-theme"/, "theme selection must persist across reloads");
+assert.match(app, /aria-label=\{dark\?"Switch to light theme":"Switch to dark theme"\}/, "theme toggle must have an accessible state label");
+assert.match(css, /::view-transition-new\(root\).*?circle\(0 at var\(--theme-reveal-x\) var\(--theme-reveal-y\)\)/, "new theme must start as a circular curtain at the button center");
+assert.match(css, /taskflow-theme-curtain 760ms/, "theme curtain must use the requested premium transition timing");
+for (const [sourceName, source] of [["styles.css", css], ["index.html", html], ["App.tsx", app]]) {
+  for (const [, literal] of source.matchAll(/#([0-9a-f]{3,8})\b/gi)) {
+    const channels = literal.length <= 4
+      ? [...literal.slice(0, 3)].map((digit) => parseInt(digit + digit, 16))
+      : literal.slice(0, 6).match(/.{2}/g).map((channel) => parseInt(channel, 16));
+    assert.equal(channels[0], channels[1], `${sourceName} color #${literal} must be monochrome`);
+    assert.equal(channels[1], channels[2], `${sourceName} color #${literal} must be monochrome`);
+  }
+}
+assert.match(css, /\.stat-icon\{[^}]*background:var\(--primary2\);color:var\(--primary\)/, "all dashboard statistic icons must share one monochrome treatment");
+assert.match(css, /\.analytics-stat-icon\{[^}]*background:var\(--primary2\);color:var\(--primary\)/, "analytics statistic icons must share the same monochrome treatment");
+assert.match(css, /\.task-bar\{background:var\(--primary\)\}\.dsa-bar\{background:var\(--chart-secondary\)\}/, "chart series must use distinct neutral intensities");
 for (const width of [1100, 850, 700]) assert.match(css, new RegExp(`@media\\(max-width:${width}px\\)`), `responsive breakpoint ${width}px must remain present`);
 assert.match(app, /workspaceLoading&&/, "account data must have a visible loading state");
 assert.match(app, /Could not load tasks/, "workspace loading errors must be surfaced");

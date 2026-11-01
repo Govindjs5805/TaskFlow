@@ -207,7 +207,7 @@ export function DsaTracker({
         <div className="panel dsa-stat-card main-stat">
           <div className="dsa-stat-head">
             <span className="muted">Total Solved</span>
-            <div className="stat-icon purple">
+            <div className="stat-icon green">
               <CheckCircle2 size={18} />
             </div>
           </div>
@@ -231,7 +231,7 @@ export function DsaTracker({
         <div className="panel dsa-stat-card difficulty-stat">
           <div className="dsa-stat-head">
             <span className="muted">Difficulty Breakdown</span>
-            <div className="stat-icon blue">
+            <div className="stat-icon green">
               <BarChart2 size={18} />
             </div>
           </div>
@@ -304,7 +304,7 @@ export function DsaTracker({
               onClick={() => setSelectedStatus(selectedStatus === "Attempted" ? "All" : "Attempted")}
             >
               <span className="chip-label">Attempted</span>
-              <strong className="chip-val blue">{stats.attempted}</strong>
+              <strong className="chip-val green">{stats.attempted}</strong>
             </div>
             <div
               className={`pipeline-chip ${selectedStatus === "Revisit" ? "active" : ""}`}
