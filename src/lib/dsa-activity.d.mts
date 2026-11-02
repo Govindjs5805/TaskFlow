@@ -23,6 +23,11 @@ export type DsaYearActivity = {
 };
 
 export function getDsaActivityLevel(count: number): 0 | 1 | 2 | 3 | 4;
+export function getDsaMonthWeekSpans(
+  year: number,
+  startOffset: number,
+  weekCount: number,
+): Array<{ month: number; startWeek: number; endWeek: number }>;
 export function getDsaYearActivity(
   problems: readonly DsaActivityProblem[],
   year: number,

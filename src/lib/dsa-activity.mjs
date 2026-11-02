@@ -1,9 +1,22 @@
-import { eachDayOfInterval, format, isValid, parseISO, startOfDay, subDays } from "date-fns";
+import { eachDayOfInterval, format, getDayOfYear, isValid, parseISO, startOfDay, subDays } from "date-fns";
 
 export function getDsaActivityLevel(count) {
   if (!Number.isFinite(count) || count <= 0) return 0;
   if (count >= 4) return 4;
   return Math.floor(count);
+}
+
+export function getDsaMonthWeekSpans(year, startOffset, weekCount) {
+  const monthStarts = Array.from({ length: 12 }, (_, month) => {
+    const firstOfMonth = new Date(year, month, 1);
+    return Math.floor((startOffset + getDayOfYear(firstOfMonth) - 1) / 7);
+  });
+
+  return monthStarts.map((startWeek, month) => ({
+    month,
+    startWeek,
+    endWeek: month === 11 ? weekCount : Math.max(startWeek + 1, monthStarts[month + 1]),
+  }));
 }
 
 export function getDsaYearActivity(problems, year, today = new Date()) {

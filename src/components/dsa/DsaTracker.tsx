@@ -1,4 +1,4 @@
-import { useState, useMemo, type CSSProperties } from "react";
+import { useState, useMemo, useRef, useEffect, type CSSProperties } from "react";
 import {
   Code2, Plus, Search, ExternalLink, Pencil, Trash2, CheckCircle2,
   Clock, BookOpen, Layers, Check, ChevronDown, ChevronUp, BarChart2,
@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import type { DsaProblem, DsaDifficulty, DsaPlatform, DsaStatus, DsaTopic } from "../../types";
-import { getDsaActivityLevel, getDsaYearActivity } from "../../lib/dsa-activity.mjs";
+import { getDsaActivityLevel, getDsaMonthWeekSpans, getDsaYearActivity } from "../../lib/dsa-activity.mjs";
 import { DsaProblemModal } from "./DsaProblemModal";
 
 interface DsaTrackerProps {
@@ -19,6 +19,10 @@ interface DsaTrackerProps {
 const PLATFORMS: DsaPlatform[] = ["LeetCode", "GeeksforGeeks", "HackerRank", "Codeforces", "Other"];
 const DIFFICULTIES: DsaDifficulty[] = ["Easy", "Medium", "Hard"];
 const STATUSES: DsaStatus[] = ["To Do", "Attempted", "Solved", "Revisit", "Need Revision"];
+const DSA_HEATMAP_WEEKDAY_WIDTH = 27;
+const DSA_HEATMAP_GAP = 3;
+const DSA_HEATMAP_MIN_CELL_SIZE = 10;
+const DSA_HEATMAP_MAX_CELL_SIZE = 20;
 const TOPICS: DsaTopic[] = [
   "Arrays",
   "Strings",
@@ -53,9 +57,36 @@ export function DsaTracker({
   const [viewMode, setViewMode] = useState<"table" | "cards">("table");
   const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
   const [selectedActivityDay, setSelectedActivityDay] = useState<string | null>(null);
+  const heatmapScrollRef = useRef<HTMLDivElement>(null);
+  const [heatmapAvailableWidth, setHeatmapAvailableWidth] = useState(0);
 
   const currentYear = new Date().getFullYear();
   const activity = useMemo(() => getDsaYearActivity(problems, selectedYear), [problems, selectedYear]);
+  const heatmapCellSize = Math.max(DSA_HEATMAP_MIN_CELL_SIZE, Math.min(
+    DSA_HEATMAP_MAX_CELL_SIZE,
+    heatmapAvailableWidth > 0
+      ? (heatmapAvailableWidth - DSA_HEATMAP_WEEKDAY_WIDTH - activity.weeks.length * DSA_HEATMAP_GAP) / activity.weeks.length
+      : 11,
+  ));
+  useEffect(() => {
+    const viewport = heatmapScrollRef.current;
+    if (!viewport) return;
+
+    const measureWidth = () => {
+      const width = Math.max(0, viewport.clientWidth - 4);
+      setHeatmapAvailableWidth((previous) => previous === width ? previous : width);
+    };
+    measureWidth();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(measureWidth);
+      observer.observe(viewport);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", measureWidth);
+    return () => window.removeEventListener("resize", measureWidth);
+  }, []);
   const availableYears = useMemo(() => {
     const datedYears = problems
       .filter((problem) => problem.status === "Solved" && problem.solved_at)
@@ -65,17 +96,11 @@ export function DsaTracker({
     return Array.from({ length: currentYear - firstYear + 1 }, (_, index) => currentYear - index);
   }, [problems, currentYear]);
   const monthLabels = useMemo(() => {
-    const labels: Array<{ month: string; weekIndex: number }> = [];
-    const occupiedWeeks = new Set<number>();
-    for (let month = 0; month < 12; month += 1) {
-      const firstOfMonth = new Date(selectedYear, month, 1);
-      const rawWeekIndex = Math.floor((activity.startOffset + firstOfMonth.getDate() - 1) / 7);
-      let weekIndex = rawWeekIndex;
-      while (occupiedWeeks.has(weekIndex) && weekIndex < activity.weeks.length - 1) weekIndex += 1;
-      occupiedWeeks.add(weekIndex);
-      labels.push({ month: format(firstOfMonth, "MMM"), weekIndex });
-    }
-    return labels;
+    return getDsaMonthWeekSpans(selectedYear, activity.startOffset, activity.weeks.length)
+      .map((span) => ({
+        ...span,
+        label: format(new Date(selectedYear, span.month, 1), "MMM"),
+      }));
   }, [activity.startOffset, activity.weeks.length, selectedYear]);
   const selectedActivity = activity.days.find((day) => day.dateKey === selectedActivityDay) ?? null;
 
@@ -383,8 +408,8 @@ export function DsaTracker({
           </div>
         </div>
 
-        <div className="dsa-activity-scroll" role="region" tabIndex={0} aria-label={`${selectedYear} DSA solving activity calendar`}>
-          <div className="dsa-activity-inner" style={{ "--dsa-week-count": activity.weeks.length } as CSSProperties}>
+        <div ref={heatmapScrollRef} className="dsa-activity-scroll" role="region" tabIndex={0} aria-label={`${selectedYear} DSA solving activity calendar`}>
+          <div className="dsa-activity-inner" style={{ "--dsa-week-count": activity.weeks.length, "--dsa-cell-size": `${heatmapCellSize}px` } as CSSProperties}>
             <div className="dsa-activity-grid">
               <div className="dsa-activity-weekdays" aria-hidden="true">
                 {Array.from({ length: 7 }, (_, index) => (
@@ -413,8 +438,8 @@ export function DsaTracker({
             </div>
             <div className="dsa-activity-months" aria-hidden="true">
               <span />
-              {monthLabels.map(({ month, weekIndex }, index) => (
-                <span key={`${month}-${index}`} style={{ gridColumn: weekIndex + 2 }}>{month}</span>
+              {monthLabels.map(({ month, label, startWeek, endWeek }) => (
+                <span key={month} style={{ gridColumn: `${startWeek + 2} / ${endWeek + 2}` }}>{label}</span>
               ))}
             </div>
           </div>

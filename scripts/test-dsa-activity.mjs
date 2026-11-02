@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { getDsaActivityLevel, getDsaYearActivity } from "../src/lib/dsa-activity.mjs";
+import { getDayOfYear } from "date-fns";
+import { getDsaActivityLevel, getDsaMonthWeekSpans, getDsaYearActivity } from "../src/lib/dsa-activity.mjs";
 
 const localDate = (year, month, day, hour = 12) => new Date(year, month - 1, day, hour).toISOString();
 const problem = (id, status, solved_at) => ({ id, status, solved_at });
@@ -30,6 +31,25 @@ assert.equal(year.currentStreak, 3, "current streak includes today and walks bac
 assert.equal(year.undatedSolvedCount, 2, "undated and invalid solved timestamps are identified, not guessed");
 assert.equal(year.days.find((day) => day.dateKey === "2024-01-05")?.count, 2);
 assert.equal(year.days.find((day) => day.dateKey === "2024-01-03")?.count, 0);
+
+for (const calendarYear of [2023, 2024, 2025, 2026]) {
+  const calendar = getDsaYearActivity([], calendarYear, new Date(calendarYear, 6, 1));
+  const monthSpans = getDsaMonthWeekSpans(calendarYear, calendar.startOffset, calendar.weeks.length);
+  assert.equal(monthSpans.length, 12);
+  assert.equal(monthSpans[0].startWeek, 0, "the first month begins in the first calendar column");
+  assert.equal(monthSpans[11].endWeek, calendar.weeks.length, "the final month extends through the last calendar column");
+  for (let index = 0; index < monthSpans.length; index += 1) {
+    const span = monthSpans[index];
+    const firstOfMonth = new Date(calendarYear, index, 1);
+    const firstDateWeek = Math.floor((calendar.startOffset + getDayOfYear(firstOfMonth) - 1) / 7);
+    assert.equal(span.startWeek, firstDateWeek, "month labels start in the same week column as their first date");
+    assert.ok(span.endWeek > span.startWeek, "month labels must have a non-empty week span");
+    if (index < monthSpans.length - 1) {
+      assert.equal(span.endWeek, monthSpans[index + 1].startWeek, "month label spans must be adjacent without overlap");
+    }
+  }
+  assert.equal(calendar.weeks.flat().filter(Boolean).length, calendar.days.length, "calendar first and last weeks contain each date once");
+}
 
 const noToday = getDsaYearActivity(records, 2024, new Date(2024, 0, 7, 12));
 assert.equal(noToday.currentStreak, 3, "current streak continues when the last solve was yesterday");
@@ -62,6 +82,9 @@ const stylesheet = readFileSync(new URL("../src/styles.css", import.meta.url), "
 assert.match(trackerSource, /getDsaYearActivity\(problems, selectedYear\), \[problems, selectedYear\]/, "activity must refresh when saved DSA data or selected year changes");
 assert.match(trackerSource, /setSelectedYear\(Number\(event\.target\.value\)\)/, "the year selector must switch the displayed calendar");
 assert.match(trackerSource, /className="dsa-activity-scroll"/, "the calendar must have a horizontally scrollable responsive viewport");
+assert.match(trackerSource, /new ResizeObserver\(measureWidth\)/, "heatmap tracks must respond to the available card width");
+assert.match(trackerSource, /gridColumn: `\$\{startWeek \+ 2\} \/ \$\{endWeek \+ 2\}`/, "month labels must occupy non-overlapping real week spans");
+assert.match(stylesheet, /\.dsa-activity-cell\{[^}]*width:var\(--dsa-cell-size\);height:var\(--dsa-cell-size\)/, "responsive heatmap cells must remain square");
 assert.match(stylesheet, /@media\(max-width:700px\)\{\.dsa-activity-panel[\s\S]*?\.dsa-activity-metrics\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/, "the heatmap summary must adapt to narrow screens");
 
 console.log("DSA activity tests passed: leap-year grid, unique solved counts, date handling, year switching, empty state, and streaks.");
