@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, type CSSProperties } from "react";
 import {
   Code2, Plus, Search, ExternalLink, Pencil, Trash2, CheckCircle2,
   Clock, BookOpen, Layers, Check, ChevronDown, ChevronUp, BarChart2,
@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import type { DsaProblem, DsaDifficulty, DsaPlatform, DsaStatus, DsaTopic } from "../../types";
+import { getDsaActivityLevel, getDsaYearActivity } from "../../lib/dsa-activity.mjs";
 import { DsaProblemModal } from "./DsaProblemModal";
 
 interface DsaTrackerProps {
@@ -50,6 +51,33 @@ export function DsaTracker({
   const [selectedTopic, setSelectedTopic] = useState<string>("All");
   const [selectedStatus, setSelectedStatus] = useState<string>("All");
   const [viewMode, setViewMode] = useState<"table" | "cards">("table");
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+  const [selectedActivityDay, setSelectedActivityDay] = useState<string | null>(null);
+
+  const currentYear = new Date().getFullYear();
+  const activity = useMemo(() => getDsaYearActivity(problems, selectedYear), [problems, selectedYear]);
+  const availableYears = useMemo(() => {
+    const datedYears = problems
+      .filter((problem) => problem.status === "Solved" && problem.solved_at)
+      .map((problem) => parseISO(problem.solved_at!).getFullYear())
+      .filter((year) => Number.isFinite(year) && year >= 2000 && year <= currentYear);
+    const firstYear = Math.max(2000, Math.min(currentYear - 4, ...(datedYears.length ? datedYears : [currentYear - 4])));
+    return Array.from({ length: currentYear - firstYear + 1 }, (_, index) => currentYear - index);
+  }, [problems, currentYear]);
+  const monthLabels = useMemo(() => {
+    const labels: Array<{ month: string; weekIndex: number }> = [];
+    const occupiedWeeks = new Set<number>();
+    for (let month = 0; month < 12; month += 1) {
+      const firstOfMonth = new Date(selectedYear, month, 1);
+      const rawWeekIndex = Math.floor((activity.startOffset + firstOfMonth.getDate() - 1) / 7);
+      let weekIndex = rawWeekIndex;
+      while (occupiedWeeks.has(weekIndex) && weekIndex < activity.weeks.length - 1) weekIndex += 1;
+      occupiedWeeks.add(weekIndex);
+      labels.push({ month: format(firstOfMonth, "MMM"), weekIndex });
+    }
+    return labels;
+  }, [activity.startOffset, activity.weeks.length, selectedYear]);
+  const selectedActivity = activity.days.find((day) => day.dateKey === selectedActivityDay) ?? null;
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -323,6 +351,94 @@ export function DsaTracker({
           </div>
         </div>
       </div>
+
+      <section className="panel dsa-activity-panel" aria-labelledby="dsa-activity-heading">
+        <div className="dsa-activity-header">
+          <div>
+            <h3 id="dsa-activity-heading">Problem-solving activity</h3>
+            <p className="muted">Daily solved problems and consistency</p>
+          </div>
+          <label className="dsa-activity-year">
+            <span>Year</span>
+            <select
+              className="filter-select"
+              aria-label="Activity year"
+              value={selectedYear}
+              onChange={(event) => {
+                setSelectedYear(Number(event.target.value));
+                setSelectedActivityDay(null);
+              }}
+            >
+              {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <div className="dsa-activity-metrics">
+          <div><strong>{activity.totalSolved}</strong><span>Solved in {selectedYear}</span></div>
+          <div><strong>{activity.activeDays}</strong><span>Active days</span></div>
+          <div><strong>{activity.longestStreak}</strong><span>Longest streak</span></div>
+          <div title="Current consecutive-day streak through today, including a solve yesterday if today is not active.">
+            <strong>{activity.currentStreak}</strong><span>Current streak</span>
+          </div>
+        </div>
+
+        <div className="dsa-activity-scroll" role="region" tabIndex={0} aria-label={`${selectedYear} DSA solving activity calendar`}>
+          <div className="dsa-activity-inner" style={{ "--dsa-week-count": activity.weeks.length } as CSSProperties}>
+            <div className="dsa-activity-grid">
+              <div className="dsa-activity-weekdays" aria-hidden="true">
+                {Array.from({ length: 7 }, (_, index) => (
+                  <span key={index}>{index === 1 ? "Mon" : index === 3 ? "Wed" : index === 5 ? "Fri" : ""}</span>
+                ))}
+              </div>
+              <div className="dsa-activity-cells">
+                {activity.days.map((day, dayIndex) => {
+                  const weekIndex = Math.floor((activity.startOffset + dayIndex) / 7);
+                  const countText = `${day.count} ${day.count === 1 ? "problem" : "problems"} solved`;
+                  const dateText = format(day.date, "EEEE, MMMM d, yyyy");
+                  return (
+                    <button
+                      type="button"
+                      key={day.dateKey}
+                      className={`dsa-activity-cell level-${getDsaActivityLevel(day.count)}${selectedActivityDay === day.dateKey ? " is-selected" : ""}`}
+                      style={{ gridColumn: weekIndex + 1, gridRow: day.date.getDay() + 1 }}
+                      title={`${dateText}: ${countText}`}
+                      aria-label={`${dateText}: ${countText}`}
+                      aria-pressed={selectedActivityDay === day.dateKey}
+                      onClick={() => setSelectedActivityDay(day.dateKey)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+            <div className="dsa-activity-months" aria-hidden="true">
+              <span />
+              {monthLabels.map(({ month, weekIndex }, index) => (
+                <span key={`${month}-${index}`} style={{ gridColumn: weekIndex + 2 }}>{month}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="dsa-activity-footer">
+          <p className="dsa-activity-selection" aria-live="polite">
+            {selectedActivity
+              ? <><b>{format(selectedActivity.date, "EEE, MMM d, yyyy")}</b> · {selectedActivity.count} {selectedActivity.count === 1 ? "problem" : "problems"} solved</>
+              : "Select a day to see its completion count. Hover or focus a day for details."}
+          </p>
+          <div className="dsa-activity-legend" role="group" aria-label="Activity intensity legend">
+            <span>Less</span>
+            {Array.from({ length: 5 }, (_, level) => <i key={level} className={`level-${level}`} aria-hidden="true" />)}
+            <span>More</span>
+          </div>
+        </div>
+        {activity.totalSolved === 0 && <p className="dsa-activity-empty">No dated solved problems in {selectedYear}.</p>}
+        {activity.undatedSolvedCount > 0 && (
+          <p className="dsa-activity-note">
+            {activity.undatedSolvedCount} solved {activity.undatedSolvedCount === 1 ? "problem has" : "problems have"} no valid completion date and {activity.undatedSolvedCount === 1 ? "is" : "are"} excluded from the graph.
+          </p>
+        )}
+      </section>
 
       {/* Topic Progress Badges (Expandable / Scrollable) */}
       {stats.topicStats.length > 0 && (

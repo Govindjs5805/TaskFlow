@@ -7,10 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "npm run test:analytics && npm run test:audit && npm run test:scheduler",
+    "test": "npm run test:analytics && npm run test:audit && npm run test:scheduler && npm run test:dsa-activity",
     "test:analytics": "node scripts/test-analytics.mjs",
     "test:audit": "node scripts/test-audit.mjs",
-    "test:scheduler": "node scripts/test-scheduled-reminders.mjs"
+    "test:scheduler": "node scripts/test-scheduled-reminders.mjs",
+    "test:dsa-activity": "node scripts/test-dsa-activity.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",
