@@ -511,7 +511,7 @@ export default function App() {
 
   return <div className={`app${dark?" dark":""}${themeFallback?" theme-fallback":""}`}>
     <aside className={`sidebar ${mobileNav?"show":""}`}>
-      <div className="brand"><div className="brand-icon"><img src="/logo.png" alt="" /></div><span>TaskFlow</span><button className="mobile-close icon-btn" onClick={()=>setMobileNav(false)}><X size={18}/></button></div>
+      <div className="brand"><div className="brand-icon"><Target size={21}/></div><span>TaskFlow</span><button className="mobile-close icon-btn" onClick={()=>setMobileNav(false)}><X size={18}/></button></div>
       <div className="workspace-label">WORKSPACE</div>
       <nav>{([
         ["Overview",LayoutDashboard],["My Tasks",CheckSquare],["Job Tracker",BriefcaseBusiness],["DSA Tracker",Code2],["Analytics",BarChart3],["Calendar",CalendarDays],["Reminders",Bell]
