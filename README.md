@@ -29,5 +29,6 @@ The SQL creates `tasks`, `applications` and `events` tables with Row Level Secur
 ## Important notes
 - Without `.env` credentials, the app opens in preview mode with sample data. In preview mode changes are held in React state and are not saved across refreshes.
 - With Supabase configured and a user signed in, records are loaded from and saved to Supabase.
-- Reminder times are stored, and upcoming dates are shown in the app. This starter version does not yet send background push notifications or email notifications. Those require a service worker/notification permission and a scheduled backend function (for example Supabase Edge Functions + cron).
+- Reminder times are stored, and in-tab reminders run while TaskFlow is open. The Reminders page can send a manual Web Push test through the authenticated `send-push` Edge Function. Automatic scheduled background reminders and email notifications are not configured; scheduled push delivery requires a separately secured server-side scheduler.
+- To deploy the push endpoint after setting `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` as Supabase Edge Function secrets, run `supabase functions deploy send-push --project-ref <PROJECT_REF>`. Keep `verify_jwt` enabled; the function also verifies the caller and applies the caller's RLS policies to subscription queries.
 - The calendar currently shows events and task due dates; selecting a date with entries displays their titles.

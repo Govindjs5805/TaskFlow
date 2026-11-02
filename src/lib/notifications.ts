@@ -5,6 +5,13 @@ import { format, parseISO, isPast, differenceInMinutes } from "date-fns";
 const STORAGE_NOTIFIED_KEY = "taskflow_notified_reminders";
 const STORAGE_ENABLED_KEY = "taskflow_notifications_enabled";
 
+export interface PushSubscriptionData {
+  endpoint: string;
+  p256dh?: string;
+  auth_key?: string;
+  user_agent?: string;
+}
+
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -132,12 +139,7 @@ export async function showLocalNotification(
 /** Subscribe browser to PushManager */
 export async function subscribeToPush(
   customVapidKey?: string
-): Promise<{
-  endpoint: string;
-  p256dh: string;
-  auth_key: string;
-  user_agent: string;
-} | null> {
+): Promise<PushSubscriptionData | null> {
   if (!isPushSupported()) return null;
 
   try {

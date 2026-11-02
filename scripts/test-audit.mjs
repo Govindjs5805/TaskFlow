@@ -10,6 +10,8 @@ const jobBoard = read("../src/components/kanban/JobKanban.tsx");
 const rounds = read("../src/components/pipeline/ApplicationRoundsModal.tsx");
 const notifications = read("../src/lib/notifications.ts");
 const notificationUi = read("../src/components/notifications/NotificationSettingsBanner.tsx");
+const pushFunction = read("../supabase/functions/send-push/index.ts");
+const supabaseConfig = read("../supabase/config.toml");
 const worker = read("../public/sw.js");
 const baseSchema = read("../supabase/schema.sql");
 const migration = read("../supabase/migrations_v2.sql");
@@ -53,6 +55,22 @@ assert.match(notifications, /Notification\.requestPermission\(\)/, "notification
 assert.match(notifications, /navigator\.serviceWorker\.register\("\/sw\.js"/, "service worker must register from the app scope");
 assert.doesNotMatch(notifications, /DEFAULT_VAPID_PUBLIC_KEY/, "push must not fall back to an unmatched demo VAPID key");
 assert.match(notificationUi, /isVapidPublicKeyConfigured/, "push UI must explain missing VAPID setup");
+assert.match(notificationUi, /\.eq\("user_id", user\.id\)[\s\S]*?\.eq\("endpoint", subscription\.endpoint\)/, "registered browser subscriptions must be checked under the active user's RLS scope");
+assert.match(notificationUi, /onPersistSubscription\(subData, "upsert"\)/, "push registration must persist the browser endpoint");
+assert.match(notificationUi, /onPersistSubscription\(\{ endpoint: currentSubscription\.endpoint \}, "delete"\)/, "push unregistration must remove the current browser endpoint");
+assert.match(notificationUi, /functions\.invoke\("send-push"/, "push test action must call the deployed Edge Function");
+assert.match(notificationUi, /Authorization: `Bearer \$\{session\.access_token\}`/, "push test must send the authenticated Supabase access token");
+assert.match(notificationUi, /session\.user\.id !== user\.id/, "push test must reject a session that changed accounts");
+assert.match(notificationUi, /Automatic scheduled background reminders are not configured/, "the UI must not claim unscheduled background reminders");
+assert.match(pushFunction, /req\.headers\.get\("Authorization"\)/, "Edge Function must read the caller's authorization header");
+assert.match(pushFunction, /supabase\.auth\.getUser\(accessToken\)/, "Edge Function must verify the access token with Supabase Auth");
+assert.match(pushFunction, /\.eq\("user_id", user\.id\)/, "Edge Function must query only the authenticated user's subscriptions");
+assert.doesNotMatch(pushFunction, /SUPABASE_SERVICE_ROLE_KEY/, "user-facing push must not use service-role credentials");
+assert.doesNotMatch(pushFunction, /const\s*\{[^}]*user_id[^}]*\}\s*=\s*await\s+req\.json\(\)/, "request body must not select a user identity");
+assert.match(pushFunction, /new Set\(\["title", "body", "url", "tag"\]\)/, "push payloads must reject unrecognized fields");
+assert.match(pushFunction, /status === 404 \|\| status === 410/, "expired push subscriptions must be recognized");
+assert.match(pushFunction, /\.delete\(\)[\s\S]*?\.eq\("id", subscription\.id\)[\s\S]*?\.eq\("user_id", user\.id\)/, "expired cleanup must stay scoped to the authenticated user's row");
+assert.match(supabaseConfig, /\[functions\.send-push\][\s\S]*?verify_jwt\s*=\s*true/, "gateway JWT verification must remain enabled for send-push");
 for (const event of ["install", "activate", "push", "notificationclick"]) {
   assert.match(worker, new RegExp(`addEventListener\\('${event}'`), `service worker must handle ${event}`);
 }
@@ -96,4 +114,4 @@ for (const width of [1100, 850, 700]) assert.match(css, new RegExp(`@media\\(max
 assert.match(app, /workspaceLoading&&/, "account data must have a visible loading state");
 assert.match(app, /Could not load tasks/, "workspace loading errors must be surfaced");
 
-console.log("Source audit passed: RLS/query scoping, Kanban wiring, rounds/calendar, notifications, DSA null/date handling, themes, and responsive/loading states.");
+console.log("Source audit passed: RLS/query scoping, Kanban wiring, rounds/calendar, authenticated push, DSA null/date handling, themes, and responsive/loading states.");

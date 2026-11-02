@@ -16,11 +16,13 @@ import {
   isPushSupported,
   isVapidPublicKeyConfigured
 } from "../../lib/notifications";
+import type { PushSubscriptionData } from "../../lib/notifications";
+import { supabase } from "../../lib/supabase";
 
 interface NotificationSettingsBannerProps {
-  user: any;
+  user: { id: string } | null;
   onNotify: (msg: string) => void;
-  onPersistSubscription: (subData: any, mode: "upsert" | "delete") => Promise<void>;
+  onPersistSubscription: (subData: PushSubscriptionData, mode: "upsert" | "delete") => Promise<void>;
 }
 
 export function NotificationSettingsBanner({
@@ -32,16 +34,33 @@ export function NotificationSettingsBanner({
   const [isEnabled, setIsEnabled] = useState(false);
   const [hasPushSub, setHasPushSub] = useState(false);
   const [isSubscribing, setIsSubscribing] = useState(false);
+  const [isSendingPushTest, setIsSendingPushTest] = useState(false);
 
   useEffect(() => {
     if (isNotificationSupported()) {
       setPermission(getNotificationPermission());
       setIsEnabled(isUserNotificationsEnabled());
     }
-    if (isPushSupported()) {
-      getExistingPushSubscription().then((sub) => setHasPushSub(Boolean(sub)));
-    }
-  }, []);
+    let cancelled = false;
+    const syncPushSubscription = async () => {
+      setHasPushSub(false);
+      if (!isPushSupported() || !user || !supabase) return;
+      const subscription = await getExistingPushSubscription();
+      if (!subscription || cancelled) return;
+
+      // A browser subscription is only considered registered after this user has
+      // persisted its endpoint under the current RLS-protected account.
+      const { data, error } = await supabase
+        .from("push_subscriptions")
+        .select("endpoint")
+        .eq("user_id", user.id)
+        .eq("endpoint", subscription.endpoint)
+        .maybeSingle();
+      if (!cancelled) setHasPushSub(!error && Boolean(data));
+    };
+    void syncPushSubscription();
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   const handleToggleEnable = async () => {
     if (permission !== "granted") {
@@ -87,6 +106,10 @@ export function NotificationSettingsBanner({
   };
 
   const handleSubscribePush = async () => {
+    if (!user || !supabase) {
+      onNotify("Sign in to register this device for background push notifications.");
+      return;
+    }
     if (!isPushSupported()) {
       onNotify("PushManager is not supported by your browser.");
       return;
@@ -114,7 +137,7 @@ export function NotificationSettingsBanner({
         const unsubOk = await unsubscribeFromPush();
         if (unsubOk) {
           setHasPushSub(false);
-          if (user && currentSubscription?.endpoint) {
+          if (currentSubscription?.endpoint) {
             await onPersistSubscription({ endpoint: currentSubscription.endpoint }, "delete");
           }
           onNotify("Device unsubscribed from background push.");
@@ -123,13 +146,9 @@ export function NotificationSettingsBanner({
         // Subscribe
         const subData = await subscribeToPush();
         if (subData) {
+          await onPersistSubscription(subData, "upsert");
           setHasPushSub(true);
-          if (user) {
-            await onPersistSubscription(subData, "upsert");
-            onNotify("Device registered in Supabase for cloud push delivery!");
-          } else {
-            onNotify("Push subscription active on this device.");
-          }
+          onNotify("Device registered for authenticated push delivery.");
         } else {
           onNotify("Failed to subscribe device to push service.");
         }
@@ -138,6 +157,50 @@ export function NotificationSettingsBanner({
       onNotify(error instanceof Error ? error.message : "Could not update this device's push subscription.");
     } finally {
       setIsSubscribing(false);
+    }
+  };
+
+  const handleSendPushTest = async () => {
+    if (!user || !supabase) {
+      onNotify("Sign in to send a push test.");
+      return;
+    }
+    if (!hasPushSub) {
+      onNotify("Register this device for push before sending a test.");
+      return;
+    }
+
+    setIsSendingPushTest(true);
+    try {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!session?.access_token || session.user.id !== user.id) {
+        throw new Error("Your signed-in session changed. Sign in again before sending a push test.");
+      }
+
+      const { data, error } = await supabase.functions.invoke("send-push", {
+        body: {
+          title: "TaskFlow push test",
+          body: "This is a real Web Push notification from TaskFlow.",
+          url: "/",
+          tag: `taskflow-push-test-${Date.now()}`
+        },
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      if (error) throw error;
+      if (data?.sent > 0 && data?.failed === 0) {
+        onNotify(`Push test sent to ${data.sent} registered device${data.sent === 1 ? "" : "s"}.`);
+      } else if (data?.sent > 0) {
+        onNotify(`Push test sent to ${data.sent} device(s); ${data.failed} could not be reached.`);
+      } else if (data?.failed > 0) {
+        onNotify("Push delivery failed. Check the device subscription and Edge Function configuration.");
+      } else {
+        onNotify("No registered push devices were found for this account.");
+      }
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "Could not send a push test.");
+    } finally {
+      setIsSendingPushTest(false);
     }
   };
 
@@ -217,9 +280,19 @@ export function NotificationSettingsBanner({
               onClick={handleTestNotification}
               title="Trigger a test reminder"
             >
-              <Send size={13} /> Test Notification
+              <Send size={13} /> Test On-Screen Alert
             </button>
           )}
+          <button
+            type="button"
+            className="outline-btn small"
+            onClick={handleSendPushTest}
+            disabled={isSendingPushTest || !user || !hasPushSub || permission !== "granted"}
+            title="Send a real push through the authenticated Supabase Edge Function"
+          >
+            {isSendingPushTest ? <RefreshCw size={13} className="spin" /> : <Send size={13} />}
+            {isSendingPushTest ? "Sending Push…" : "Send Push Test"}
+          </button>
         </div>
       </div>
 
@@ -256,7 +329,7 @@ export function NotificationSettingsBanner({
 
         <div className="notif-transparency-note">
           <small>
-            <b>Notice:</b> On-screen alerts work while TaskFlow is open in a tab. Push notifications when the browser is completely closed require deploying the Supabase <code>send-push</code> Edge Function with configured VAPID credentials.
+            <b>Notice:</b> On-screen reminders run while TaskFlow is open in a tab. Use Send Push Test to verify delivery through the authenticated Supabase <code>send-push</code> Edge Function. Automatic scheduled background reminders are not configured.
           </small>
         </div>
       </div>
