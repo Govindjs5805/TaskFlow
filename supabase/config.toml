@@ -1,2 +1,5 @@
 [functions.send-push]
 verify_jwt = true
+
+[functions.dispatch-scheduled-reminders]
+verify_jwt = false

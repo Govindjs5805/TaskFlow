@@ -61,7 +61,8 @@ assert.match(notificationUi, /onPersistSubscription\(\{ endpoint: currentSubscri
 assert.match(notificationUi, /functions\.invoke\("send-push"/, "push test action must call the deployed Edge Function");
 assert.match(notificationUi, /Authorization: `Bearer \$\{session\.access_token\}`/, "push test must send the authenticated Supabase access token");
 assert.match(notificationUi, /session\.user\.id !== user\.id/, "push test must reject a session that changed accounts");
-assert.match(notificationUi, /Automatic scheduled background reminders are not configured/, "the UI must not claim unscheduled background reminders");
+assert.match(notificationUi, /Supabase Cron migration, Vault secrets, and dispatcher setup/, "the UI must explain the scheduler setup prerequisite");
+assert.doesNotMatch([app, notifications, notificationUi].join("\n"), /CRON_SECRET|SUPABASE_SERVICE_ROLE_KEY/, "server-only scheduler secrets must stay out of frontend code");
 assert.match(pushFunction, /req\.headers\.get\("Authorization"\)/, "Edge Function must read the caller's authorization header");
 assert.match(pushFunction, /supabase\.auth\.getUser\(accessToken\)/, "Edge Function must verify the access token with Supabase Auth");
 assert.match(pushFunction, /\.eq\("user_id", user\.id\)/, "Edge Function must query only the authenticated user's subscriptions");

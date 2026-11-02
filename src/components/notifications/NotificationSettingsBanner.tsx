@@ -329,7 +329,7 @@ export function NotificationSettingsBanner({
 
         <div className="notif-transparency-note">
           <small>
-            <b>Notice:</b> On-screen reminders run while TaskFlow is open in a tab. Use Send Push Test to verify delivery through the authenticated Supabase <code>send-push</code> Edge Function. Automatic scheduled background reminders are not configured.
+            <b>Notice:</b> On-screen reminders run while TaskFlow is open in a tab. Scheduled background reminders require the Supabase Cron migration, Vault secrets, and dispatcher setup. Browser permission, a registered push device, and device or operating-system settings can affect delivery; delivery is not guaranteed.
           </small>
         </div>
       </div>
